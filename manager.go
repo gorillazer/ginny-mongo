@@ -2,8 +2,6 @@ package mongo
 
 import (
 	"context"
-	"fmt"
-	"log"
 	"time"
 
 	"go.mongodb.org/mongo-driver/mongo"
@@ -11,19 +9,21 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 	"go.mongodb.org/mongo-driver/tag"
+	"go.uber.org/zap"
 )
 
 var globalManager *Manager
 
 // Manager 客户端连接池管理器 对可用同1套认证凭据访问的1个deployment(副本集/分片集群实例)
 type Manager struct {
+	logger   *zap.Logger
 	Client   *mongod.Client
 	Database *mongod.Database
 }
 
 // NewManager 根据基础配置 初始化连接池管理器
 // Manager所有方法 均不对dbname进行trim、大小写等处理，由调用方检查 Manager保持入参原样
-func NewManager(config *Config) (*Manager, error) {
+func NewManager(config *Config, logger *zap.Logger) (*Manager, error) {
 	if globalManager != nil {
 		return globalManager, nil
 	}
@@ -40,6 +40,7 @@ func NewManager(config *Config) (*Manager, error) {
 	}
 
 	mgr := &Manager{
+		logger:   logger.With(zap.String("type", "DBManager")),
 		Client:   client,
 		Database: client.Database(config.DefaultDBName),
 	}
@@ -62,7 +63,7 @@ func (m *Manager) Close() {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := m.Client.Disconnect(ctx); err != nil {
-		log.Fatal(fmt.Sprintf("disconnect mongodb client error: %s", err.Error()))
+		m.logger.Sugar().Fatalf("disconnect mongodb client error: %s", err.Error())
 	}
 	globalManager = nil
 }
