@@ -3,6 +3,9 @@ package mongo
 import (
 	"fmt"
 	"strings"
+
+	"github.com/pkg/errors"
+	"github.com/spf13/viper"
 )
 
 // Config mongodb deployment 连接基础配置：mongodb单实例、副本集(可有读写分离)、分片集群
@@ -47,6 +50,16 @@ type Config struct {
 	MaxPoolSize int `json:"max_pool_size" mapstructure:"max_pool_size"`
 	//到每1个server的允许的最小连接数。非0时 若连接均长时空闲 driver会在后台维持最小连接数，driver默认0
 	MinPoolSize int `json:"min_pool_size" mapstructure:"min_pool_size"`
+}
+
+// NewConfig
+func NewConfig(v *viper.Viper) (*Config, error) {
+	var err error
+	o := new(Config)
+	if err = v.UnmarshalKey("mongo", o); err != nil {
+		return nil, errors.Wrap(err, "unmarshal app option error")
+	}
+	return o, err
 }
 
 // String 打印可输出的配置
