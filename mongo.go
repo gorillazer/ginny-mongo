@@ -1,72 +1,84 @@
+// Package mongo provide mongo utils
 package mongo
 
 import (
 	"context"
 	"fmt"
-	"log"
+	"reflect"
 	"time"
 
+	codecs "github.com/ti/mongo-go-driver-protobuf"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/bsoncodec"
 	"go.mongodb.org/mongo-driver/mongo"
-	mongod "go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 	"go.mongodb.org/mongo-driver/tag"
+	"go.mongodb.org/mongo-driver/x/bsonx"
 )
 
-var globalManager *Manager
-
-// Manager 客户端连接池管理器 对可用同1套认证凭据访问的1个deployment(副本集/分片集群实例)
-type Manager struct {
-	Client   *mongod.Client
-	Database *mongod.Database
+// Mongo the mongo client
+type Mongo struct {
+	*mongo.Client
+	defaultDatabase string
 }
 
-// NewManager 根据基础配置 初始化连接池管理器
-// Manager所有方法 均不对dbname进行trim、大小写等处理，由调用方检查 Manager保持入参原样
-func NewManager(config *Config) (*Manager, error) {
-	if globalManager != nil {
-		return globalManager, nil
+var defaultRegistry *bsoncodec.Registry
+
+func init() {
+	codec, err := bsoncodec.NewStructCodec(bsoncodec.JSONFallbackStructTagParser)
+	if err != nil {
+		err = fmt.Errorf("error creating json StructCodec: %w", err)
+		panic(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.ConnectTimeout)*time.Second)
-	defer cancel()
-	client, err := mongod.Connect(ctx, clientOptions(config))
+	rb := bson.NewRegistryBuilder().
+		RegisterDefaultEncoder(reflect.Struct, codec).
+		RegisterDefaultDecoder(reflect.Struct, codec)
+	defaultRegistry = codecs.Register(rb).Build()
+}
+
+// New new client
+// mongodb://admin:123456@127.0.0.1:27017/test?authSource=admin
+func NewMongo(ctx context.Context, config *Config) (*Mongo, error) {
+	m := &Mongo{}
+	mongoClient, err := m.newClient(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+	m.Client = mongoClient
+	return m, nil
+}
+
+// Init init the mongo client
+func (m *Mongo) newClient(ctx context.Context, config *Config) (*mongo.Client, error) {
+	client, err := mongo.Connect(ctx, clientOptions(config))
 	if err != nil {
 		return nil, err
 	}
 	//首先ping主节点，主节点若up则无错返回。主节点down时，寻找其他可ping节点，若有1个节点up则无错返回。或直到ServerSelectionTimeout返回错误（driver默认30s）
 	//使用ping会降低应用弹性，因为有可能节点是短暂down或正在自动故障转移。所以此处保证集群里有一个节点up 则可启动
-	if err := client.Ping(context.Background(), readpref.Primary()); err != nil {
+	if err := client.Ping(ctx, readpref.Primary()); err != nil {
 		return nil, err
 	}
 
-	mgr := &Manager{
-		Client:   client,
-		Database: client.Database(config.DefaultDBName),
-	}
-
-	return mgr, nil
+	return client, nil
 }
 
-// NewManagerFromClient 从客户端连接池实例client 初始化管理器
-// 不同业务库部署在同一实例集群 可用同一套认证凭据访问，且业务方需指定不同的默认DB来使用时，可使用本初始化方法 由业务方控制多个Manager共享client
-func NewManagerFromClient(client *mongo.Client, defaultDBName string) *Manager {
-	defaultDB := client.Database(defaultDBName)
-	return &Manager{
-		Client:   client,
-		Database: defaultDB,
+// TransformDocument transform any object to bson documents
+func (m *Mongo) TransformDocument(val interface{}) bsonx.Doc {
+	buf := make([]byte, 0, 256)
+	b, err := bson.MarshalAppendWithRegistry(defaultRegistry, buf[:0], val)
+	if err != nil {
+		panic(err)
 	}
+	dis, err := bsonx.ReadDoc(b)
+	if err != nil {
+		panic(err)
+	}
+	return dis
 }
 
-// Close 释放所有连接池使用的资源。该函数应当很少用到
-func (m *Manager) Close() {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if err := m.Client.Disconnect(ctx); err != nil {
-		log.Fatal(fmt.Sprintf("disconnect mongodb client error: %s", err.Error()))
-	}
-	globalManager = nil
-}
-
+// clientOptions
 func clientOptions(config *Config) *options.ClientOptions {
 	opt := options.Client()
 
@@ -120,4 +132,21 @@ func clientOptions(config *Config) *options.ClientOptions {
 	opt.SetMinPoolSize(uint64(config.MinPoolSize))
 
 	return opt
+}
+
+// Collection 获取 Collection
+func (m *Mongo) Collection(colName string) *mongo.Collection {
+	return m.Database(m.defaultDatabase).Collection(colName)
+}
+
+// DefaultDatabase 获取默认数据库
+func (m *Mongo) DefaultDatabase() *mongo.Database {
+	return m.Database(m.defaultDatabase)
+}
+
+// Close 关闭
+func (m *Mongo) Close(ctx context.Context) error {
+	err := m.Client.Disconnect(ctx)
+	m.Client = nil
+	return err
 }
