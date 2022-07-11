@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/goriller/ginny-util/graceful"
 	codecs "github.com/ti/mongo-go-driver-protobuf"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/bsoncodec"
@@ -44,6 +45,11 @@ func NewMongo(ctx context.Context, config *Config) (*Mongo, error) {
 	if err != nil {
 		return nil, err
 	}
+	// graceful
+	graceful.AddCloser(func(ctx context.Context) error {
+		return m.Close(ctx)
+	})
+
 	m.Client = mongoClient
 	return m, nil
 }
