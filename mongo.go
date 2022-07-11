@@ -38,7 +38,6 @@ func init() {
 }
 
 // New new client
-// mongodb://admin:123456@127.0.0.1:27017/test?authSource=admin
 func NewMongo(ctx context.Context, config *Config) (*Mongo, error) {
 	m := &Mongo{}
 	mongoClient, err := m.newClient(ctx, config)
