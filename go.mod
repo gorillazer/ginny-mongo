@@ -8,5 +8,5 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/spf13/viper v1.12.0
 	github.com/ti/mongo-go-driver-protobuf v1.0.0-rc6
-	go.mongodb.org/mongo-driver v1.10.0
+	go.mongodb.org/mongo-driver v1.10.1
 )
